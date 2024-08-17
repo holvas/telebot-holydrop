@@ -1,224 +1,201 @@
-const cron = require('node-cron');
-const TelegramApi = require('node-telegram-bot-api');
-const axios = require('axios');
-require('dotenv').config();
-const { againOptions } = require('./options');  // Імпортуємо опції з options.js
-const token = process.env.TELEGRAM_BOT_TOKEN;
-console.log(token);
+// /* -- Імпорт та налаштування -- */
 
-const bot = new TelegramApi(token, { polling: true });
-const userState = {}; // Об'єкт для збереження стану користувача (вибраної книги, глави тощо)
+// // Імпорт бібліотек
+// const TelegramApi = require("node-telegram-bot-api");
+// const axios = require("axios");
+// const schedule = require('node-schedule');
+// const express = require('express');
+// require("dotenv").config();
 
-// Функція для отримання списку книг з API
-async function getBooks() {
-    const response = await axios.get('https://bible.helloao.org/api/ukr_npu/books.json');
-    return response.data;
-}
+// //Налаштування Telegram бота
+// const token = process.env.TELEGRAM_BOT_TOKEN; //токен бота
+// const bot = new TelegramApi(token, { polling: true }); //Запуск бота в режимі опитування, щоб отримувати оновлення від Telegram
 
-// Функція для отримання списку глав певної книги
-async function getChapters(bookSlug) {
-    const response = await axios.get(`https://bible.helloao.org/api/ukr_npu/${bookSlug}/chapters.json`);
-    return response.data;
-}
-
-// Функція для отримання списку віршів у певній главі
-async function getVerses(bookSlug, chapterNumber) {
-    const response = await axios.get(`https://bible.helloao.org/api/ukr_npu/${bookSlug}/${chapterNumber}/verses.json`);
-    return response.data;
-}
-
-// Функція для отримання тексту певного вірша
-async function getVerse(bookSlug, chapterNumber, verseNumber) {
-    const response = await axios.get(`https://bible.helloao.org/api/ukr_npu/${bookSlug}/${chapterNumber}/${verseNumber}.json`);
-    return response.data;
-}
-
-// Функція для надсилання випадкового вірша з API користувачу
-async function sendRandomVerse(chatId) {
-    const randomData = await getRandomVerse();
-    const verseMessage = `📖 ${randomData.book.name} ${randomData.chapter.chapter}:${randomData.verse.verse}\n\n${randomData.verse.text}`;
-
-    bot.sendMessage(chatId, verseMessage, {
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: 'Читай далі', callback_data: 'choose_book' }]
-            ]
-        }
-    });
-}
-
-// Обробка callback-запитів від користувача
-bot.on('callback_query', async msg => {
-    const data = msg.data;
-    const chatId = msg.message.chat.id;
-
-    if (data === 'choose_book') {
-        const books = await getBooks();
-        const bookButtons = books.map(book => [{ text: book.name, callback_data: `choose_chapter:${book.slug}` }]);
-
-        await bot.sendMessage(chatId, 'Оберіть книгу:', {
-            reply_markup: {
-                inline_keyboard: bookButtons
-            }
-        });
-
-    } else if (data.startsWith('choose_chapter')) {
-        const [action, bookSlug] = data.split(':');
-        userState[chatId] = { bookSlug };
-        await bot.sendMessage(chatId, 'Введіть номер глави:');
-
-    } else if (data.startsWith('choose_verse')) {
-        const [action, bookSlug, chapterNumber] = data.split(':');
-        userState[chatId].chapterNumber = chapterNumber;
-        await bot.sendMessage(chatId, 'Введіть номер вірша:');
-
-    } else if (data === '/again') {
-        await sendRandomVerse(chatId);
-    }
-});
-
-// Обробка текстових повідомлень від користувача
-bot.on('message', async msg => {
-    const text = msg.text;
-    const chatId = msg.chat.id;
-
-    if (text === '/start') {
-        await bot.sendMessage(chatId, `Привіт, ${msg.from.first_name}! Тебе вітає BlessDay бот.`);
-    } else if (text === '/info') {
-        await bot.sendMessage(chatId, `Тебе звуть ${msg.from.first_name} ${msg.from.last_name}!`);
-    } else if (text === '/game') {
-        await sendRandomVerse(chatId);
-    } else if (userState[chatId] && !userState[chatId].chapterNumber) {
-        const chapterNumber = parseInt(text);
-        const chapters = await getChapters(userState[chatId].bookSlug);
-
-        if (chapterNumber > 0 && chapterNumber <= chapters.length) {
-            userState[chatId].chapterNumber = chapterNumber;
-            await bot.sendMessage(chatId, `Ви вибрали главу ${chapterNumber}. Введіть номер вірша:`);
-        } else {
-            await bot.sendMessage(chatId, `Неправильний номер глави. У книзі є ${chapters.length} глав.`);
-        }
-
-    } else if (userState[chatId] && userState[chatId].chapterNumber && !userState[chatId].verseNumber) {
-        const verseNumber = parseInt(text);
-        const verses = await getVerses(userState[chatId].bookSlug, userState[chatId].chapterNumber);
-
-        if (verseNumber > 0 && verseNumber <= verses.length) {
-            const verse = await getVerse(userState[chatId].bookSlug, userState[chatId].chapterNumber, verseNumber);
-            userState[chatId].verseNumber = verseNumber;
-            await bot.sendMessage(chatId, `📖 ${verse.text}`, againOptions);
-        } else {
-            await bot.sendMessage(chatId, `Неправильний номер вірша. У главі є ${verses.length} віршів.`);
-        }
-    } else {
-        await bot.sendMessage(chatId, 'Я не зрозумів. Будь ласка, обери дію в МЕНЮ');
-    }
-});
-
-// Cron-завдання для відправки випадкового вірша щогодини з 8:00 до 21:00
-cron.schedule('0 8-21 * * *', async () => {
-    const chatId = process.env.TELEGRAM_CHAT_ID; // Використовуйте реальний chatId користувача
-    await sendRandomVerse(chatId);
-}, {
-    timezone: "Europe/Kiev"
-});
-
-// Функція, яка запускає бот і встановлює команди
-const start = () => {
-    bot.setMyCommands([
-        { command: '/start', description: 'Привітання' },
-        { command: '/info', description: 'Інфо про користувача' },
-        { command: '/game', description: 'Оримати вірш' },
-    ]);
-
-    console.log('Бот запущено!');
-}
-
-// Запуск бота
-start();
-
-
-
-
-/* /* Імпортуємо необхідні залежност */
-// const cron = require('node-cron');
-// const TelegramApi = require('node-telegram-bot-api');
-// const axios = require('axios');
-// require('dotenv').config();
-// const { verseOptions, againOptions } = require('./options');
-// const token = process.env.TELEGRAM_BOT_TOKEN;
-
-// const bot = new TelegramApi(token, { polling: true });
-
-// //Отримуємо випадковий вірш
-// async function getRandomVerse() {
-//     try {
-//         // Отримуємо список книг
-//         const booksResponse = await axios.get('https://bible.helloao.org/api/ukr_npu/books.json');
-//         const books = booksResponse.data;
-//         const randomBook = books[Math.floor(Math.random() * books.length)];
-
-//         // Отримуємо список глав для вибраної книги
-//         const chaptersResponse = await axios.get(`https://bible.helloao.org/api/ukr_npu/${randomBook.slug}/chapters.json`);
-//         const chapters = chaptersResponse.data;
-//         const randomChapter = chapters[Math.floor(Math.random() * chapters.length)];
-
-//         // Отримуємо список віршів для вибраної глави
-//         const versesResponse = await axios.get(`https://bible.helloao.org/api/ukr_npu/${randomBook.slug}/${randomChapter.chapter}/verses.json`);
-//         const verses = versesResponse.data;
-//         const randomVerse = verses[Math.floor(Math.random() * verses.length)];
-
-//         return `📖 ${randomBook.name} ${randomChapter.chapter}:${randomVerse.verse}\n\n${randomVerse.text}`;
-//     } catch (error) {
-//         console.error('Error fetching random verse:', error);
-//         return 'Вибачте, сталася помилка при отриманні випадкового вірша. Спробуйте пізніше.';
-//     }
-// }
-
-// //функція для надсилання вірша
-// async function sendRandomVerse(chatId) {
-//     const verse = await getRandomVerse();
-//     bot.sendMessage(chatId, verse, {
-//         reply_markup: {
-//             inline_keyboard: [
-//                 [{ text: 'Читай далі', callback_data: 'read_more' }]
-//             ]
-//         }
-//     });
-// }
-
-// //Налаштовуємо cron job для надсилання віршів
-// cron.schedule('0 8-21 * * *', async () => {
-//     const chatId = process.env.TELEGRAM_CHAT_ID; // Використовуйте реальний chatId користувача
-//     await sendRandomVerse(chatId);
-// }, {
-//     timezone: "Europe/Kiev" // Встановіть вашу часову зону
+// //Реалізація привітання користувачів
+// bot.onText(/\/start/, (msg) => {
+//     const chatId = msg.chat.id;
+//     const userName = msg.from.first_name || 'Користувач';
+//     // Вітальне повідомлення
+//     bot.sendMessage(chatId, `Вітаю тебе, ${userName}`);
 // });
 
-// //Основний код для запуску бота
-// const start = () => {
-//     bot.setMyCommands([
-//         { command: '/start', description: 'Привітання' },
-//         { command: '/info', description: 'Інфо про користувача' },
-//         { command: '/game', description: 'Оримати вірш' },
-//     ]);
+// /* -- Отримання переліку книг з API -- */
 
-//     bot.on('message', async msg => {
-//         const text = msg.text;
-//         const chatId = msg.chat.id;
+// // функція для отримання переліку книг
+// async function getBooksList() {
+//     try {
+//         const response = await axios.get('https://bible.helloao.org/api/ukr_npu/books.json');
+//         const booksList =  response.data.books; // Звертаємося до властивості books
+        
+//          // Перевірка, чи є `booksList` масивом
+//          if (Array.isArray(booksList)) {
+//              return booksList;
+//          } else {
+//              throw new Error('Невірний формат даних для переліку книг');
+//          }
+//     } catch (error) {
+//         console.error('Помилка отримання книг:', error);
+//         return null;
+//     }
+// };
 
-//         if (text === '/start') {
-//             await bot.sendMessage(chatId, `Привіт, ${msg.from.first_name}! Тебе вітає BlessDay бот.`);
-//         } else if (text === '/info') {
-//             await bot.sendMessage(chatId, `Тебе звуть ${msg.from.first_name} ${msg.from.last_name}!`);
-//         } else if (text === '/game') {
-//             await sendRandomVerse(chatId);
-//         } else {
-//             await bot.sendMessage(chatId, 'Я не зрозумів. Будь ласка, обери дію в МЕНЮ');
+// // Обробка команди для виводу переліку книг
+// bot.onText(/Перелік книг/, async (msg) => {
+//     const chatId = msg.chat.id;
+//     const booksList = await getBooksList();
+
+//     if (booksList) {
+//         let reply = 'Ось перелік книг Нового Заповіту:\n\n';
+//         booksList.forEach((book) => {
+//             reply += `${book.name}\n`;
+//         });
+//         bot.sendMessage(chatId, reply);
+//     } else {
+//         bot.sendMessage(chatId, 'Виникла помилка при отриманні переліку книг.');
+//     }
+// });
+
+
+// /* -- Створення інтерактивного меню -- */
+
+// // Додання кнопки до головного меню
+// bot.onText(/\/start/, (msg) => {
+//     const chatId = msg.chat.id;
+
+//     const options = {
+//         reply_markup: {
+//             keyboard: [
+//                 [{ text: 'Перелік книг' }],
+//                 [{ text: 'Випадковий вірш' }],
+//             ],
+//             resize_keyboard: true,
+//             one_time_keyboard: true
 //         }
-//     });
+//     };
 
-//     console.log('Бот запущено!');
-// }
+//     bot.sendMessage(chatId, 'Обери дію:', options);
+// });
 
-// start();*/
+
+// /* -- Випадковий вірш з випадкової глави -- */
+
+// // функція для отримання випадкового вірша
+
+// // async function getRandomVerse() {
+// //     try {
+// //         const booksList = await getBooksList();
+// //         const randomBook = booksList[Math.floor(Math.random() * booksList.length)];
+// //         const bookId = randomBook.id;
+
+// //         const chaptersResponse = await axios.get(`https://bible.helloao.org/api/ukr_npu/${bookId}.json`);
+// //         const chapters = chaptersResponse.data.book.totalNumberOfChapters;
+// //         const randomChapter = Math.floor(Math.random() * chapters) + 1;
+
+// //         const verseResponse = await axios.get(`https://bible.helloao.org/api/ukr_npu/${bookId}/${randomChapter}.json`);
+// //         const chapterContent = verseResponse.data.chapter.content;
+
+// //         // Фільтруємо тільки ті елементи, що є віршами
+// //         const verses = chapterContent.filter(item => item.type === 'verse');
+
+// //         // Вибираємо випадковий вірш
+// //         const randomVerse = verses[Math.floor(Math.random() * verses.length)];
+
+// //         // Повертаємо текст вірша
+// //         return randomVerse.content.join(' '); // Якщо вірш розділений на частини, об'єднуємо їх в рядок
+// //     } catch (error) {
+// //         console.error('Помилка отримання випадкового вірша:', error);
+// //         return null;
+// //     }
+// // }
+
+// // async function getRandomVerse() {
+// //     try {
+// //         // Отримуємо список книг
+// //         const booksResponse = await axios.get('https://bible.helloao.org/api/ukr_npu/books.json');
+// //         const books = booksResponse.data.books;
+        
+// //         // Вибираємо випадкову книгу
+// //         const randomBook = books[Math.floor(Math.random() * books.length)];
+// //         const bookName = randomBook.name;  // Використовуємо властивість name
+        
+// //         // Формуємо URL для запиту до першого розділу вибраної книги
+// //         const firstChapterUrl = `https://bible.helloao.org/api/ukr_npu/${encodeURIComponent(bookName)}/1.json`;
+// //         const chaptersResponse = await axios.get(firstChapterUrl);
+
+// //         // Виводимо всю відповідь для перевірки
+// //         console.log(chaptersResponse.data);
+
+// //         // Перевіряємо наявність даних та отримуємо загальну кількість розділів
+// //         if (chaptersResponse.data && chaptersResponse.data.translation) {
+// //             const totalChapters = chaptersResponse.data.translation.totalNumberOfChapters;
+
+// //             // Вибираємо випадковий розділ
+// //             const randomChapterNumber = Math.floor(Math.random() * totalChapters) + 1;
+
+// //             // Формуємо URL для запиту до випадкового розділу
+// //             const chapterUrl = `https://bible.helloao.org/api/ukr_npu/${encodeURIComponent(bookName)}/${randomChapterNumber}.json`;
+// //             const chapterResponse = await axios.get(chapterUrl);
+
+// //             // Отримуємо вміст розділу (масив content)
+// //             const chapterContent = chapterResponse.data.chapter.content;
+
+// //             // Фільтруємо вміст для отримання тільки віршів
+// //             const verses = chapterContent.filter(content => content.type === 'verse');
+
+// //             // Вибираємо випадковий вірш
+// //             const randomVerse = verses[Math.floor(Math.random() * verses.length)];
+
+// //             console.log(`Випадковий вірш: ${randomVerse.number} - ${randomVerse.content.join(' ')}`);
+// //         } else {
+// //             console.error('Дані про кількість розділів відсутні');
+// //         }
+        
+// //     } catch (error) {
+// //         console.error('Помилка отримання випадкового вірша:', error.message);
+// //     }
+// // }
+// // getRandomVerse();
+
+// // Обробка команди для виводу випадкового вірш
+// bot.onText(/Випадковий вірш/, async (msg) => {
+//     const chatId = msg.chat.id;
+//     const verse = await getRandomVerse();
+
+//     if (verse) {
+//         bot.sendMessage(chatId, `Ось випадковий вірш:\n\n${verse}`);
+//     } else {
+//         bot.sendMessage(chatId, 'Не вдалося отримати випадковий вірш.');
+//     }
+// });
+
+
+// /* -- Планування повідомлень -- */
+
+// // Планувальник для відправки випадкових віршів
+// schedule.scheduleJob('0 8-21 * * *', async () => {
+//     const chatId = 'YOUR_CHAT_ID';
+//     const verse = await getRandomVerse();
+
+//     if (verse) {
+//         bot.sendMessage(chatId, `Нагадування:\n\n${verse}`);
+//     }
+// });
+
+
+fetch('https://bible.helloao.org/api/available_translations.json')
+    .then(response => response.json())
+    .then(availableTranslations => {
+        // Створюємо рядок із інформацією про переклади
+        let translationsText = 'Available translations:\n\n';
+        availableTranslations.translations.forEach(translation => {
+            translationsText += `ID: ${translation.id}\nName: ${translation.name}\nEnglish Name: ${translation.englishName}\nLanguage: ${translation.languageName || 'Unknown'}\n\n`;
+        });
+
+        // Виводимо результат
+        console.log(translationsText);
+        translationsText; // Повертаємо текст
+    })
+    .catch(error => {
+        console.error('Error fetching translations:', error);
+        'Error fetching translations'; // Повертаємо текст помилки
+    });

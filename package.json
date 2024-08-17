@@ -1,0 +1,25 @@
+{
+  "name": "telebot-holydrop",
+  "version": "1.0.0",
+  "description": "Основні функцій бота:\r 1. Привітання користувачів.\r 2. Вибір між Старим та Новим Заповітом.\r 3. Вибір книги, глави та вірша.\r 4. Випадковий вірш як нагадування.\r 5. Інтерактивне меню з кнопками.",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon index.js",
+    "start": "node index.js",
+    "prettier": "prettier --write ."
+  },
+  "author": " (Vasyl Holubovskyi)",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.7.3",
+    "cron": "^3.1.7",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "node-cron": "^3.0.3",
+    "node-schedule": "^2.1.1",
+    "node-telegram-bot-api": "^0.66.0"
+  },
+  "devDependencies": {
+    "prettier": "3.3.3"
+  }
+}
